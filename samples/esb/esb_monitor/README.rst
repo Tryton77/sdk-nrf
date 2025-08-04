@@ -45,6 +45,18 @@ Configuration
 
 |config|
 
+Configuration options
+=====================
+
+Check and configure the following options:
+
+.. _CONFIG_ESB_SNIFFER:
+
+CONFIG_ESB_SNIFFER
+   Disable logging received packets via UART, and set RTT as transport layer for the packets.
+   It is intended for use together with :file:`scripts/esb_sniffer/main.py` or :file:`scripts/esb_sniffer/capture_to_pcap.py` scripts.
+   This option is disabled by default.
+
 Building and running
 ********************
 
@@ -71,6 +83,20 @@ Complete the following steps to test the samples:
 #. Connect to the monitor DK with a terminal emulator (for example, the `Serial Terminal app`_).
    See :ref:`test_and_optimize` for the required settings and steps.
 #. Observe the logged traffic of the DK programmed with the Monitor sample.
+
+Complete the following steps to test Monitor sample with :kconfig:option:`ESB_SNIFFER` Kconfig option enabled:
+
+1. Power on DK.
+#. Read and follow the instructions from the :file:`scripts/esb_sniffer/README.md` file to configure your environment.
+#. Run :file:`scripts/esb_sniffer/capture_to_pcap.py` script with the name of the output file as argument.
+   For example:
+
+   .. parsed-literal::
+      :class: highlight
+
+      python3 capture_to_pcap.py output.pcap
+
+#. Analyze captured traffic in Wireshark
 
 Dependencies
 ************

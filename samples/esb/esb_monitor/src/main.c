@@ -25,6 +25,11 @@
 #if defined(NRF54LM20A_ENGA_XXAA)
 #include <hal/nrf_clock.h>
 #endif /* defined(NRF54LM20A_ENGA_XXAA) */
+#if defined(CONFIG_ESB_SNIFFER)
+#include <zephyr/sys/byteorder.h>
+#include <SEGGER_RTT.h>
+#include "sniffer.h"
+#endif /* defined(CONFIG_ESB_SNIFFER) */
 
 LOG_MODULE_REGISTER(esb_monitor, CONFIG_ESB_MONITOR_APP_LOG_LEVEL);
 
@@ -43,14 +48,36 @@ static void leds_update(uint8_t value)
 }
 #endif /* defined(CONFIG_LED_ENABLE) */
 
-static void log_packet(uint32_t timestamp)
+static void log_packet(void)
 {
+#if defined(CONFIG_ESB_SNIFFER)
+	uint32_t cycles, ms, us, len;
+
+	cycles = k_cycle_get_32();
+	ms = k_cyc_to_ms_floor32(cycles);
+	/* Calculate remaing cycles */
+	cycles = cycles - (ms * (CONFIG_SYS_CLOCK_HW_CYCLES_PER_SEC / 1000));
+
+	/* htonl */
+	us = sys_cpu_to_be32(k_cyc_to_us_floor32(cycles));
+	ms = sys_cpu_to_be32(ms);
+
+	SEGGER_RTT_LOCK();
+	len = SEGGER_RTT_WriteNoLock(1, &ms, sizeof(uint32_t));
+	len += SEGGER_RTT_WriteNoLock(1, &us, sizeof(uint32_t));
+	len += SEGGER_RTT_WriteNoLock(1, &rx_payload, sizeof(struct esb_payload));
+	SEGGER_RTT_UNLOCK();
+	if (len < sizeof(struct esb_payload) + 8) {
+		LOG_ERR("RTT failed to write, rtt buffer too small");
+	}
+#else
 	LOG_INF("%u: length = %d, pipe = %d, rssi = %d, noack = %d, pid = %d",
-				timestamp, rx_payload.length, rx_payload.pipe,
-				rx_payload.rssi, rx_payload.noack, rx_payload.pid);
+				k_cyc_to_ms_floor32(k_cycle_get_32()), rx_payload.length,
+				rx_payload.pipe, rx_payload.rssi, rx_payload.noack, rx_payload.pid);
 
 	LOG_HEXDUMP_INF(rx_payload.data, rx_payload.length, "data:");
 	LOG_INF("--------------------------------------------------------------");
+#endif /* !defined(CONFIG_ESB_SNIFFER) */
 }
 
 void event_handler(struct esb_evt const *event)
@@ -58,7 +85,7 @@ void event_handler(struct esb_evt const *event)
 	switch (event->evt_id) {
 	case ESB_EVENT_RX_RECEIVED:
 		if (esb_read_rx_payload(&rx_payload) == 0) {
-			log_packet(k_cyc_to_ms_floor32(k_cycle_get_32()));
+			log_packet();
 #if defined(CONFIG_LED_ENABLE)
 			leds_update(rx_payload.data[1]);
 #endif /* defined(CONFIG_LED_ENABLE) */
@@ -170,6 +197,7 @@ int esb_initialize(void)
 	config.bitrate = ESB_BITRATE_2MBPS;
 	config.mode = ESB_MODE_MONITOR;
 	config.event_handler = event_handler;
+	config.use_fast_ramp_up = true;
 
 	err = esb_init(&config);
 	if (err) {
@@ -219,6 +247,13 @@ int main(void)
 
 	LOG_INF("Initialization complete");
 
+#if defined(CONFIG_ESB_SNIFFER)
+	err = sniffer_init();
+	if (err) {
+		LOG_ERR("Sniffer initialization failed, err %d", err);
+		return 0;
+	}
+#else
 	err = esb_start_rx();
 	if (err) {
 		LOG_ERR("ESB start monitor failed, err %d", err);
@@ -226,6 +261,7 @@ int main(void)
 	}
 
 	LOG_INF("Start receiving packets");
+#endif /* !defined(CONFIG_ESB_SNIFFER) */
 
 	/* return to idle thread */
 	return 0;
