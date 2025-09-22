@@ -138,6 +138,9 @@ static const struct mbox_dt_spec off_channel =
 
 static K_SEM_DEFINE(errata_216_sem, 0, 1);
 
+static volatile int var_timeout = 0;
+static volatile int var_crcerror = 0;
+
 /**
  * @brief Send errata HMPAN-216 on request signal to SysCtrl
  *
@@ -778,6 +781,7 @@ static void generate_modulated_rf_packet(uint8_t mode,
 		break;
 	}
 
+	tx_packet[2] = 0;
 	nrf_radio_packetptr_set(NRF_RADIO, tx_packet);
 }
 
@@ -944,6 +948,7 @@ static void radio_rx(uint8_t mode, uint8_t channel, enum transmit_pattern patter
 	rx_packet_cnt = 0;
 
 	nrf_radio_int_enable(NRF_RADIO, NRF_RADIO_INT_CRCOK_MASK);
+	nrf_radio_int_enable(NRF_RADIO, NRF_RADIO_INT_CRCERROR_MASK);
 
 #if CONFIG_FEM
 	(void)fem_configure(true, mode, &fem);
@@ -1180,6 +1185,15 @@ static void rx_timeout_work_handler(struct k_work *work)
 {
 	radio_disable();
 	/* Send off signal for nRF54H20 errata HMPAN-216 */
+	
+	if (var_timeout) {
+		printk("Timeout!!!\n");
+	}
+
+	if (var_crcerror) {
+		printk("Received %d pkts with crc error!\n", var_crcerror);
+	}
+
 	if (errata_216_off()) {
 		printk("Failed to send errata HMPAN-216 off\n");
 	}
@@ -1253,6 +1267,7 @@ void on_radio_end(const struct radio_test_config *config)
 	tx_packet_cnt++;
 	if (tx_packet_cnt == config->params.modulated_tx.packets_num &&
 	    config->type == MODULATED_TX) {
+		printk("%d sent\n", tx_packet[2]);
 		radio_disable();
 		/* Send off signal for nRF54H20 errata HMPAN-216 */
 		if (errata_216_off()) {
@@ -1263,6 +1278,8 @@ void on_radio_end(const struct radio_test_config *config)
 		cancel();
 	} else if (config->type == MODULATED_TX) {
 		nrf_radio_task_trigger(NRF_RADIO, NRF_RADIO_TASK_START);
+		printk("%d sent\n", tx_packet[2]);
+		tx_packet[2]++;
 	}
 }
 
@@ -1275,13 +1292,22 @@ void radio_handler(const void *context)
 	    nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_CRCOK)) {
 		nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_CRCOK);
 		rx_packet_cnt++;
+		printk("%d received\n", rx_packet[2]);
 		if (config->params.rx.packets_num) {
 			if (rx_packet_cnt == config->params.rx.packets_num) {
+				var_timeout = 0;
 				k_work_reschedule(&rx_timeout_work, K_NO_WAIT);
 			} else {
+				var_timeout = 1;
 				k_work_reschedule(&rx_timeout_work, K_MSEC(RX_PACKET_TIMEOUT_MS));
 			}
 		}
+	}
+	
+	if (nrf_radio_int_enable_check(NRF_RADIO, NRF_RADIO_INT_CRCERROR_MASK) &&
+	    nrf_radio_event_check(NRF_RADIO, NRF_RADIO_EVENT_CRCERROR)) {
+		nrf_radio_event_clear(NRF_RADIO, NRF_RADIO_EVENT_CRCERROR);
+		var_crcerror++;
 	}
 
 #if defined(RADIO_INTENSET_PHYEND_Msk) || defined(RADIO_INTENSET00_PHYEND_Msk)
